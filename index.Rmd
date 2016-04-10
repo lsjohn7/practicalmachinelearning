@@ -7,6 +7,7 @@ output: html_document
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 library(RCurl)
 library(caret)
+library(randomForest)
 ```
 
 
@@ -15,9 +16,10 @@ In the Weight Lifting Exercises Dataset, six participants performed a set of 10 
 
 The goals of this course project are the following: 
 
-* Utilizing a machine learning approach, create a predictive model using the training data and predict the activity class in the 20 sample testing data.
+* Utilizing a machine learning approach, create a model using the training data capable of predicting activity class from sensor data.
 * Use cross-validation and estimate the expected out of sample error of your approach.
-* Create a report detailing data preprocessing, data partitioning, cross-validation, and model creation.
+* Create a report detailing data pre-processing, data partitioning, cross-validation, and model creation.
+* Predict the activity class in the 20 sample testing data.
 
 ## Getting and Cleaning Data
 
@@ -42,7 +44,7 @@ training<-training[,-c(1:6)]
 ```
 This produces a training dataset with 19,622 observations on 52 different variables. 
 
-Now that we have eliminated multiple columns from the training data, modify the testing data columns to match. Of course, the training classe column is an exception.
+Now that we have eliminated multiple columns from the training data, modify the testing data columns to match. Of course, the exercise classification column, classe, in the training data is not included in the testset data.
 ```{r, DA4}
 testing<-testing[,names(training[,-c(53)])]
 ```
@@ -56,30 +58,112 @@ for(i in 1:dim(training[,-c(53)])[2]){
 
 ## Partitioning Data
 
-In order to estimate the out of sample error, the testing data was further partitioned into training(60%) and testing(40%) datasets.
+In order to estimate the out of sample error, the training data was further partitioned into training(75%) and testing(25%) 4-fold cross-validation sets(A-D). The choice of k was based on practical time limitations. Smaller values of k have the effect of increasing bias but producing less variance. Ideally, a higher value of k would be chosen however given the time taken to train on each of these training sets, discussed below, k=4 was chosen.
 ```{r, DA6}
 set.seed(1234)
-myTrain<-createDataPartition(y=training$classe, p=0.60, list=FALSE)
-mytraining<-training[myTrain,]
-mytesting<-training[-myTrain,]
+foldsT<-createFolds(y=training$classe, k=4, list=TRUE, returnTrain = TRUE)
+foldsV<-createFolds(y=training$classe, k=4, list=TRUE, returnTrain = FALSE)
 ```
 
 ## Model Creation
-Due to excellent performance as a general machine learning classifier, a random forest model was created using the training data.
+Due to excellent performance as a general machine learning classifier, random forest was chosen as the machine learning algorithm. Random forest models were trained on each of the 4-fold cross validation training sets. Since the creation of each of these models is time consuming, ~7 hours each, the models were saved and used in later analysis stages.
 ```{r, MC1, eval=FALSE}
-modFitRF2<-train(classe~., data=mytraining, method="rf", prox=TRUE)
-```
-```{r, MC2, echo=FALSE}
-# Since the model creation step is so time consuming. The model has been saved and is reloaded.
-load("modFitRF2.rDA")
-```
-Training data variable importance for this random forest model are as follows:
-```{r, MC3, cache=TRUE}
-varImpPlot(modFitRF2$finalModel, main="Relative importance of training variables\non Random Forest model", pch=19)
-```
-This plot shows the mean decrease in Gini coefficient, which is a measure of how much each variable contributes to node homogeneity, with the "roll belt" variable having the highest importance.
+set.seed(7654)
+modFitRFa<-train(classe~., data=training[foldsT[[1]],], method="rf", prox=TRUE)
+save(modFitRFa, file="modFitRFa.rDA")
+rm(modFitRFa)
 
-We can assess the performance of this model on the cross-validated testset created from the original training data. 
+modFitRFb<-train(classe~., data=training[foldsT[[2]],], method="rf", prox=TRUE)
+save(modFitRFb, file="modFitRFb.rDA")
+rm(modFitRFb)
+
+modFitRFc<-train(classe~., data=training[foldsT[[3]],], method="rf", prox=TRUE)
+save(modFitRFc, file="modFitRFc.rDA")
+rm(modFitRFc)
+
+modFitRFd<-train(classe~., data=training[foldsT[[4]],], method="rf", prox=TRUE)
+save(modFitRFd, file="modFitRFd.rDA")
+rm(modFitRFd)
+```
+
+Each of these trainings created 500 trees and explored tuning paramaters such as the number of predictors to randomly sample at each node, mtry. 
+```{r, MC2}
+load("modFitRFa.rDA")
+modFitRFa
+```
+
+The final models used mtry=2, 27, 27, and 2 for training sets A-D. 
+
+Training data variable importance for the random forest model trained on one of the 4-fold cross validated training sets is as follows:
+```{r, MC3, cache=TRUE}
+varImpPlot(modFitRFa$finalModel, main="Figure 1: Relative importance of training variables\non Random Forest model", pch=19)
+```
+
+This plot shows the mean decrease in Gini coefficient, which is a measure of how much each variable contributes to node homogeneity or purity, with the "roll belt" and "yaw belt" variables having the two highest importance.
+
+We can assess the performance of the models on the 4 validation sets(A-D) created from the original training data.
+```{r}
+load("modFitRFa.rDA")
+predRF1<-predict(modFitRFa, training[foldsV[[1]],])
+rm(modFitRFa)
+
+load("modFitRFb.rDA")
+predRF2<-predict(modFitRFb, training[foldsV[[2]],])
+rm(modFitRFb)
+
+load("modFitRFc.rDA")
+predRF3<-predict(modFitRFc, training[foldsV[[3]],])
+rm(modFitRFc)
+
+load("modFitRFd.rDA")
+predRF4<-predict(modFitRFd, training[foldsV[[4]],])
+rm(modFitRFd)
+```
+
+We can generate a table of the predictions to the actual activity class from each of the validation sets. Below are the results from validation set A.
+```{r}
+confusionMatrix(predRF1, training[foldsV[[1]],c("classe")])$table
+```
+
+We can also calculate the accuracy and out of set error rates for each of the validation sets.
+```{r, echo=FALSE}
+library(knitr)
+acc<-c(confusionMatrix(predRF1, training[foldsV[[1]],c("classe")])$overall[1],
+         confusionMatrix(predRF2, training[foldsV[[2]],c("classe")])$overall[1],
+         confusionMatrix(predRF3, training[foldsV[[3]],c("classe")])$overall[1],
+         confusionMatrix(predRF4, training[foldsV[[4]],c("classe")])$overall[1])
+error<-1-acc
+table<-data.frame(ValidationSet=c(1,2,3,4),Accuracy=acc, Error=error)
+kable(table,caption = "Table 1: Accuracy and Error Rates of Cross-Validated Models")
+```
+
+The mean accuracy and out of set error rate are `r mean(table$Accuracy)` and `r mean(table$Error)`, respectively.
+
+## Prediction of Testing Data Activity Class
+Originally, I had planned to run each of the 4 random forest models trained on each of the cross-validated datasets on the predicition testing set and combine the predictions. Alternatively, I thought I might train a new model on the full training dataset. However, this ended up not being necessary. Each of the four models had very high, and similar, accuracies on the validation sets. Therefore, it was not surprising that each of the four models gave the same set of predictions. Given their agreement, I decided to submit the predictions. Given this gave 20/20 correct, I decided to not create a model on the full dataset.
+```{r, MC4, echo=FALSE}
+load("modFitRFa.rDA")
+pred1<-predict(modFitRFa, newdata=testing)
+rm(modFitRFa)
+load("modFitRFb.rDA")
+pred2<-predict(modFitRFb, newdata=testing)
+rm(modFitRFb)
+load("modFitRFc.rDA")
+pred3<-predict(modFitRFc, newdata=testing)
+rm(modFitRFc)
+load("modFitRFd.rDA")
+pred4<-predict(modFitRFd, newdata=testing)
+rm(modFitRFd)
+```
+
+```{r, MC}
+library(knitr)
+df<-data.frame(rbind(as.character(pred1), as.character(pred2), 
+                     as.character(pred3), as.character(pred4)))
+names(df)<-c(1:20)
+row.names(df)<-c("Pred1", "Pred2", "Pred3", "Pred4")
+kable(df, caption = "Table 2: Model Predictions on Testing Data")
+```
 
 
 
